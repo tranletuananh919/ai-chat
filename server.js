@@ -7,7 +7,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: true })); // dev: cho phép tất cả origin
+app.use(cors({ origin: true }));
 
 // --- MongoDB connect ---
 const { MONGODB_URI, GEMINI_API_KEY, PORT = 3000 } = process.env;
@@ -33,20 +33,29 @@ const Conversation = mongoose.model('Conversation', ConversationSchema);
 
 // --- Gemini setup ---
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-// model nhanh, rẻ cho chat. Cần chất lượng cao hơn thì đổi sang "gemini-1.5-pro"
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // --- Routes ---
-// Lấy lịch sử theo userId
-app.get('/history/:userId', async (req, res) => {
-  const convo = await Conversation.findOne({ userId: req.params.userId });
-  if (!convo) return res.json({ userId: req.params.userId, messages: [] });
-  res.json({ userId: convo.userId, messages: convo.messages });
+
+// Tạo conversation mới (khi user bấm vào Chat AI)
+app.post('/conversation', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'userId là bắt buộc' });
+
+    const convo = new Conversation({ userId, messages: [] });
+    await convo.save();
+
+    res.json({ success: true, id: convo._id });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-// Gửi câu hỏi -> gọi Gemini -> lưu -> trả lời
-app.post('/chat', async (req, res) => {
+// Gửi tin nhắn trong 1 conversation có sẵn
+app.post('/chat/:conversationId', async (req, res) => {
   try {
+    const { conversationId } = req.params;
     const { userId, question } = req.body;
     if (!userId || !question) {
       return res.status(400).json({ error: 'userId và question là bắt buộc' });
@@ -56,20 +65,18 @@ app.post('/chat', async (req, res) => {
     const result = await model.generateContent(question);
     const answer = result?.response?.text() ?? '(Không có phản hồi)';
 
-    // Tạo hội thoại mới thay vì xóa cũ
-    const convo = new Conversation({
-      userId,
-      messages: [
-        { role: "user", content: question },
-        { role: "assistant", content: answer }
-      ]
-    });
+    // tìm conversation
+    const convo = await Conversation.findById(conversationId);
+    if (!convo) return res.status(404).json({ error: "Conversation not found" });
+
+    convo.messages.push({ role: 'user', content: question });
+    convo.messages.push({ role: 'assistant', content: answer });
     await convo.save();
 
-    res.json({ answer, messages: convo.messages });
+    res.json({ success: true, answer, messages: convo.messages });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Server error', detail: String(err?.message || err) });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -85,7 +92,7 @@ app.get('/conversations/:userId', async (req, res) => {
     const previews = convos.map(c => ({
       id: c._id,
       createdAt: c.createdAt,
-      preview: c.messages[0]?.content.slice(0, 40) + '...'
+      preview: c.messages[0]?.content?.slice(0, 40) + '...'
     }));
 
     res.json({ success: true, conversations: previews });
@@ -111,7 +118,3 @@ app.get('/', (_, res) => res.send('AI chat backend OK'));
 app.listen(PORT, () => {
   console.log(`Server chạy: http://localhost:${PORT}`);
 });
-
-
-
-
