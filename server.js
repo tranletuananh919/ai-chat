@@ -76,11 +76,44 @@ app.post('/chat', async (req, res) => {
   }
 });
 
+// Lấy danh sách hội thoại (chỉ preview)
+app.get('/conversations/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const convos = await Conversation.find({ userId })
+      .sort({ createdAt: -1 })
+      .select('_id createdAt messages')
+      .lean();
+
+    const previews = convos.map(c => ({
+      id: c._id,
+      createdAt: c.createdAt,
+      preview: c.messages[0]?.content.slice(0, 40) + '...'
+    }));
+
+    res.json({ success: true, conversations: previews });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Lấy chi tiết 1 hội thoại
+app.get('/conversation/:id', async (req, res) => {
+  try {
+    const convo = await Conversation.findById(req.params.id);
+    if (!convo) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true, messages: convo.messages });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Health check
 app.get('/', (_, res) => res.send('AI chat backend OK'));
 
 app.listen(PORT, () => {
   console.log(`Server chạy: http://localhost:${PORT}`);
 });
+
 
 
