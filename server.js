@@ -56,13 +56,17 @@ app.post('/chat', async (req, res) => {
     const result = await model.generateContent(question);
     const answer = result?.response?.text() ?? '(Không có phản hồi)';
 
-    // tìm hoặc tạo conversation
-    let convo = await Conversation.findOne({ userId });
-    if (!convo) convo = new Conversation({ userId, messages: [] });
-
-    // push 2 messages
-    convo.messages.push({ role: 'user', content: question });
-    convo.messages.push({ role: 'assistant', content: answer });
+    // Xóa toàn bộ hội thoại cũ của user
+    await Conversation.deleteMany({ userId });
+    
+    // Tạo hội thoại mới chỉ với message hiện tại
+    const convo = new Conversation({
+      userId,
+      messages: [
+        { role: "user", content: question },
+        { role: "assistant", content: answer }
+      ]
+    });
     await convo.save();
 
     res.json({ answer, messages: convo.messages });
@@ -72,21 +76,11 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-// Xoá toàn bộ history của user
-app.delete("/history/:userId", async (req, res) => {
-  try {
-    const { userId } = req.params;
-    await Chat.deleteMany({ userId });
-    res.json({ success: true, message: "Đã xoá toàn bộ lịch sử." });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // Health check
 app.get('/', (_, res) => res.send('AI chat backend OK'));
 
 app.listen(PORT, () => {
   console.log(`Server chạy: http://localhost:${PORT}`);
 });
+
 
