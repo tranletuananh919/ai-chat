@@ -72,9 +72,21 @@ app.post('/chat', async (req, res) => {
   }
 });
 
+// Xoá toàn bộ history của user
+app.delete("/history/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    await Chat.deleteMany({ userId });
+    res.json({ success: true, message: "Đã xoá toàn bộ lịch sử." });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Health check
 app.get('/', (_, res) => res.send('AI chat backend OK'));
 
 app.listen(PORT, () => {
   console.log(`Server chạy: http://localhost:${PORT}`);
 });
+
