@@ -56,10 +56,7 @@ app.post('/chat', async (req, res) => {
     const result = await model.generateContent(question);
     const answer = result?.response?.text() ?? '(Không có phản hồi)';
 
-    // Xóa toàn bộ hội thoại cũ của user
-    await Conversation.deleteMany({ userId });
-    
-    // Tạo hội thoại mới chỉ với message hiện tại
+    // Tạo hội thoại mới thay vì xóa cũ
     const convo = new Conversation({
       userId,
       messages: [
@@ -114,6 +111,7 @@ app.get('/', (_, res) => res.send('AI chat backend OK'));
 app.listen(PORT, () => {
   console.log(`Server chạy: http://localhost:${PORT}`);
 });
+
 
 
 
