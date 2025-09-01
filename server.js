@@ -48,6 +48,7 @@ app.post('/conversation', async (req, res) => {
 
     res.json({ success: true, id: convo._id });
   } catch (err) {
+    console.error("Error creating conversation:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -75,7 +76,7 @@ app.post('/chat/:conversationId', async (req, res) => {
 
     res.json({ success: true, answer, messages: convo.messages });
   } catch (err) {
-    console.error(err);
+    console.error("Error in chat:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -92,11 +93,14 @@ app.get('/conversations/:userId', async (req, res) => {
     const previews = convos.map(c => ({
       id: c._id,
       createdAt: c.createdAt,
-      preview: c.messages[0]?.content?.slice(0, 40) + '...'
+      preview: c.messages[0]?.content
+        ? c.messages[0].content.slice(0, 40) + '...'
+        : '(Cuộc trò chuyện trống)'
     }));
 
     res.json({ success: true, conversations: previews });
   } catch (err) {
+    console.error("Error fetching conversations:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -108,6 +112,7 @@ app.get('/conversation/:id', async (req, res) => {
     if (!convo) return res.status(404).json({ error: "Not found" });
     res.json({ success: true, messages: convo.messages });
   } catch (err) {
+    console.error("Error fetching conversation:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
