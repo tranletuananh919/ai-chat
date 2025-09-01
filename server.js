@@ -7,8 +7,9 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: true })); // dev: mở CORS
+app.use(cors({ origin: true }));
 
+// --- MongoDB connect ---
 const { MONGODB_URI, GEMINI_API_KEY, PORT = 3000 } = process.env;
 if (!MONGODB_URI) throw new Error('Missing MONGODB_URI');
 if (!GEMINI_API_KEY) throw new Error('Missing GEMINI_API_KEY');
@@ -30,14 +31,13 @@ const ConversationSchema = new mongoose.Schema({
 
 const Conversation = mongoose.model('Conversation', ConversationSchema);
 
-// --- Gemini ---
+// --- Gemini setup ---
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-// Cần chất lượng cao hơn thì: gemini-1.5-pro
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-// --- Routes ---
+/* ---------------- ROUTES ---------------- */
 
-// Tạo conversation mới (khi bấm "Chat với Chatbot AI" hoặc FAQ)
+// Tạo conversation mới
 app.post('/conversation', async (req, res) => {
   try {
     const { userId } = req.body;
@@ -52,8 +52,8 @@ app.post('/conversation', async (req, res) => {
   }
 });
 
-// Streaming chat (fetch + ReadableStream)
-app.post('/chat-stream/:conversationId', async (req, res) => {
+// Gửi tin nhắn thường (không streaming)
+app.post('/chat/:conversationId', async (req, res) => {
   try {
     const { conversationId } = req.params;
     const { userId, question } = req.body;
@@ -61,49 +61,61 @@ app.post('/chat-stream/:conversationId', async (req, res) => {
       return res.status(400).json({ error: 'userId và question là bắt buộc' });
     }
 
+    const result = await model.generateContent(question);
+    const answer = result?.response?.text() ?? '(Không có phản hồi)';
+
     const convo = await Conversation.findById(conversationId);
-    if (!convo) return res.status(404).json({ error: 'Conversation not found' });
+    if (!convo) return res.status(404).json({ error: "Conversation not found" });
 
-    // Lưu câu hỏi của user trước
     convo.messages.push({ role: 'user', content: question });
+    convo.messages.push({ role: 'assistant', content: answer });
     await convo.save();
 
-    // Header để cho phép chunked streaming
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('X-Accel-Buffering', 'no'); // Nginx/railway: tắt buffering nếu có
-    if (typeof res.flushHeaders === 'function') res.flushHeaders();
-
-    // Gọi Gemini streaming
-    const streamResp = await model.generateContentStream(question);
-
-    let fullAnswer = '';
-    for await (const chunk of streamResp.stream) {
-      const text = chunk?.text() || '';
-      if (!text) continue;
-      fullAnswer += text;
-      // Gửi từng mảnh xuống client
-      res.write(text);
-    }
-
-    // Kết thúc stream
-    res.end();
-
-    // Lưu trả lời của assistant
-    convo.messages.push({ role: 'assistant', content: fullAnswer });
-    await convo.save();
+    res.json({ success: true, answer, messages: convo.messages });
   } catch (err) {
-    console.error('stream error:', err);
-    // Cố gửi lỗi xuống client nếu còn mở
-    try {
-      res.write('\n[STREAM_ERROR]');
-      res.end();
-    } catch (_) {}
+    console.error(err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Danh sách hội thoại (preview)
+// 🔥 Gửi tin nhắn có streaming (ChatGPT style)
+app.post('/chat-stream/:conversationId', async (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Transfer-Encoding', 'chunked');
+
+  try {
+    const { conversationId } = req.params;
+    const { userId, question } = req.body;
+    if (!userId || !question) return res.status(400).end("Thiếu userId hoặc question");
+
+    const convo = await Conversation.findById(conversationId);
+    if (!convo) return res.status(404).end("Không tìm thấy hội thoại");
+
+    convo.messages.push({ role: "user", content: question });
+    await convo.save();
+
+    const result = await model.generateContentStream(question);
+
+    let fullAnswer = "";
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) {
+        fullAnswer += text;
+        res.write(text); // gửi từng đoạn về client
+      }
+    }
+
+    convo.messages.push({ role: "assistant", content: fullAnswer });
+    await convo.save();
+
+    res.end();
+  } catch (err) {
+    console.error("Stream error:", err);
+    res.end("[STREAM_ERROR]");
+  }
+});
+
+// Lấy danh sách hội thoại
 app.get('/conversations/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -115,7 +127,7 @@ app.get('/conversations/:userId', async (req, res) => {
     const previews = convos.map(c => ({
       id: c._id,
       createdAt: c.createdAt,
-      preview: (c.messages[0]?.content || '(mới)')?.slice(0, 40) + '...'
+      preview: c.messages[0]?.content?.slice(0, 40) || "(Trống)"
     }));
 
     res.json({ success: true, conversations: previews });
@@ -124,30 +136,31 @@ app.get('/conversations/:userId', async (req, res) => {
   }
 });
 
-// Chi tiết 1 hội thoại
+// Lấy chi tiết 1 hội thoại
 app.get('/conversation/:id', async (req, res) => {
   try {
     const convo = await Conversation.findById(req.params.id);
-    if (!convo) return res.status(404).json({ error: 'Not found' });
+    if (!convo) return res.status(404).json({ error: "Not found" });
     res.json({ success: true, messages: convo.messages });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Xoá 1 hội thoại
+// Xóa hội thoại
 app.delete('/conversation/:id', async (req, res) => {
   try {
-    await Conversation.findByIdAndDelete(req.params.id);
+    const deleted = await Conversation.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, error: "Not found" });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Health
+// Health check
 app.get('/', (_, res) => res.send('AI chat backend OK'));
 
 app.listen(PORT, () => {
-  console.log(`Server chạy: http://localhost:${PORT}`);
+  console.log(`✅ Server chạy: http://localhost:${PORT}`);
 });
