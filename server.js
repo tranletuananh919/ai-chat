@@ -117,9 +117,20 @@ app.get('/conversation/:id', async (req, res) => {
   }
 });
 
+// Xóa 1 hội thoại
+app.delete('/conversation/:id', async (req, res) => {
+  try {
+    await Conversation.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Health check
 app.get('/', (_, res) => res.send('AI chat backend OK'));
 
 app.listen(PORT, () => {
   console.log(`Server chạy: http://localhost:${PORT}`);
 });
+
